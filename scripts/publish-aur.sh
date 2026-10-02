@@ -1,13 +1,43 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${AUR_SSH_PRIVATE_KEY:?Set the AUR_SSH_PRIVATE_KEY repository secret}"
-: "${AUR_USERNAME:?Set the AUR_USERNAME repository variable}"
-: "${AUR_EMAIL:?Set the AUR_EMAIL repository variable}"
+: "${AUR_SSH_PRIVATE_KEY:?AUR publication is disabled: set the AUR_SSH_PRIVATE_KEY repository secret}"
+: "${AUR_USERNAME:?AUR publication is disabled: set the AUR_USERNAME repository variable}"
+: "${AUR_EMAIL:?AUR publication is disabled: set the AUR_EMAIL repository variable}"
+
+if [[ $(id -u) -eq 0 ]]; then
+  echo 'Run this script as an unprivileged user: makepkg refuses to run as root.' >&2
+  exit 1
+fi
 
 cd "$(dirname "$0")/.."
-test "$(git branch --show-current)" = main
-test "$(makepkg --printsrcinfo)" = "$(cat .SRCINFO)"
+
+# actions/checkout silently downloads a tarball instead of a Git checkout when git
+# is missing, which used to abort here with a bare "not a git repository" message.
+if [[ ! -d .git ]]; then
+  echo "Not a Git checkout: $(pwd)" >&2
+  echo 'Install git before actions/checkout so the recipe can be committed and pushed.' >&2
+  exit 1
+fi
+
+branch=$(git branch --show-current)
+if [[ $branch != main ]]; then
+  echo "Publishing requires the main branch; the current branch is '${branch:-detached HEAD}'" >&2
+  exit 1
+fi
+
+if [[ ! -f .SRCINFO ]]; then
+  echo '.SRCINFO is missing; regenerate it with: makepkg --printsrcinfo > .SRCINFO' >&2
+  exit 1
+fi
+if ! srcinfo=$(makepkg --printsrcinfo); then
+  echo 'makepkg could not generate .SRCINFO metadata; refusing to publish.' >&2
+  exit 1
+fi
+if [[ $srcinfo != "$(<.SRCINFO)" ]]; then
+  echo 'Stale .SRCINFO; regenerate it with: makepkg --printsrcinfo > .SRCINFO' >&2
+  exit 1
+fi
 
 git fetch origin main
 if [[ $(git rev-parse HEAD) != $(git rev-parse origin/main) ]]; then

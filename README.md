@@ -33,6 +33,8 @@ The [update workflow](.github/workflows/update-aur.yml) checks every six hours a
 
 The updater accepts only a newer stable release. It downloads both Linux archives and their upstream `.sha256` files, verifies the hashes and archive layout, then regenerates `.SRCINFO`. The Arch validation job builds and installs the x86_64 package and runs `ocx --version` and `opencodex --version`. It inspects aarch64 archives but does not run aarch64 binaries on real hardware. Failed checks stop publication.
 
+Both jobs install the Arch toolchain before checking out the repository, so the workflow always works on a real Git checkout that it can commit to. The publication step also drops to an unprivileged user, because `makepkg` refuses to run as root. If a prerequisite is missing, the job stops with an explicit message instead of a bare Git error.
+
 To enable automatic AUR publication:
 
 1. Generate a dedicated unencrypted Ed25519 SSH key for this workflow and add its **public** key to your [AUR account](https://aur.archlinux.org/account/) under SSH Public Key. Store its private key, including the first and last lines, as the GitHub Actions repository secret `AUR_SSH_PRIVATE_KEY`. Do not reuse a personal SSH key.

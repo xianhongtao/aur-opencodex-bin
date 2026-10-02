@@ -27,9 +27,11 @@ jobs:
     runs-on: ubuntu-latest
     container: archlinux:latest
     steps:
-      - uses: actions/checkout@v4
+      # Install the toolchain before checking out: without git the checkout action
+      # falls back to downloading a tarball and the workspace has no .git directory.
       - name: Install validation tools
         run: pacman -Syu --noconfirm --needed base-devel git python curl
+      - uses: actions/checkout@v7
       - name: Check upstream and build package as an ordinary user
         run: |
           useradd -m builder
@@ -49,7 +51,7 @@ jobs:
           version=$(sed -n 's/^pkgver=//p' PKGBUILD)
           timeout 30 ocx --version | grep -F "$version"
           timeout 30 opencodex --version | grep -F "$version"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: validated-aur-recipe
           path: |
@@ -69,15 +71,26 @@ jobs:
       AUR_USERNAME: ${{ vars.AUR_USERNAME }}
       AUR_EMAIL: ${{ vars.AUR_EMAIL }}
     steps:
-      - uses: actions/checkout@v4
+      # git must exist before checkout, otherwise the recipe cannot be committed or
+      # pushed because the workspace would not be a Git checkout at all.
+      - name: Install publication tools
+        run: pacman -Syu --noconfirm --needed base-devel git openssh python
+      - uses: actions/checkout@v7
         with:
           ref: main
           fetch-depth: 0
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: validated-aur-recipe
           path: .
-      - name: Install publication tools
-        run: pacman -Syu --noconfirm --needed base-devel git openssh python
+      # makepkg refuses to run as root, so hand the workspace to an unprivileged user.
       - name: Commit validated recipe and synchronize AUR
-        run: bash scripts/publish-aur.sh
+        run: |
+          useradd -m builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          runuser -u builder -- env \
+            HOME=/home/builder \
+            AUR_SSH_PRIVATE_KEY="$AUR_SSH_PRIVATE_KEY" \
+            AUR_USERNAME="$AUR_USERNAME" \
+            AUR_EMAIL="$AUR_EMAIL" \
+            bash "$GITHUB_WORKSPACE/scripts/publish-aur.sh"
