@@ -97,13 +97,26 @@ from urllib.request import Request, urlopen
 
 expected = sys.argv[1]
 url = 'https://aur.archlinux.org/rpc/v5/info?arg[]=opencodex-bin'
-for attempt in range(12):
-    with urlopen(Request(url, headers={'User-Agent': 'opencodex-bin-publisher'}), timeout=20) as response:
-        data = json.load(response)
-    if data['resultcount'] == 1 and data['results'][0]['Version'] == expected:
+attempts = 30
+
+# The AUR metadata API can keep serving the previous version for a few minutes
+# after the Git push, so poll patiently instead of failing the run too early.
+for attempt in range(1, attempts + 1):
+    reported = 'unavailable'
+    try:
+        with urlopen(Request(url, headers={'User-Agent': 'opencodex-bin-publisher'}), timeout=20) as response:
+            data = json.load(response)
+        if data.get('resultcount') == 1:
+            reported = data['results'][0]['Version']
+    except Exception as error:  # transient API or network failure; keep polling
+        reported = f'error: {error}'
+    print(f'AUR metadata check {attempt}/{attempts}: {reported}', flush=True)
+    if reported == expected:
         print(f'AUR reports opencodex-bin {expected}')
         break
-    time.sleep(5)
+    time.sleep(10)
 else:
-    raise SystemExit(f'AUR API did not report expected version {expected}')
+    raise SystemExit(
+        f'AUR still reports {reported} instead of {expected} after {attempts} checks'
+    )
 PY
