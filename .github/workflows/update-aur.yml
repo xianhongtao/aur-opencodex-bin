@@ -1,0 +1,83 @@
+name: Update OpenCodeX AUR package
+
+on:
+  schedule:
+    # 02:23, 08:23, 14:23, 20:23 Asia/Shanghai (UTC+8)
+    - cron: '23 0,6,12,18 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - PKGBUILD
+      - .SRCINFO
+      - ocx-launcher
+      - LICENSE
+      - scripts/**
+      - .github/workflows/update-aur.yml
+
+concurrency:
+  group: opencodex-aur-publish
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install validation tools
+        run: pacman -Syu --noconfirm --needed base-devel git python curl
+      - name: Check upstream and build package as an ordinary user
+        run: |
+          useradd -m builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          runuser -u builder -- bash -euo pipefail -c '
+            PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tests
+            python scripts/update-upstream.py
+            diff -u .SRCINFO <(makepkg --printsrcinfo)
+            makepkg --verifysource
+            makepkg -s --noconfirm
+          '
+      - name: Install and smoke test x86_64 package
+        run: |
+          package=$(find . -maxdepth 1 -name 'opencodex-bin-*.pkg.tar.zst' -print -quit)
+          test -n "$package"
+          pacman -U --noconfirm "$package"
+          version=$(sed -n 's/^pkgver=//p' PKGBUILD)
+          timeout 30 ocx --version | grep -F "$version"
+          timeout 30 opencodex --version | grep -F "$version"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: validated-aur-recipe
+          path: |
+            PKGBUILD
+            .SRCINFO
+          include-hidden-files: true
+          if-no-files-found: error
+
+  publish:
+    needs: validate
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    permissions:
+      contents: write
+    env:
+      AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+      AUR_USERNAME: ${{ vars.AUR_USERNAME }}
+      AUR_EMAIL: ${{ vars.AUR_EMAIL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: validated-aur-recipe
+          path: .
+      - name: Install publication tools
+        run: pacman -Syu --noconfirm --needed base-devel git openssh python
+      - name: Commit validated recipe and synchronize AUR
+        run: bash scripts/publish-aur.sh

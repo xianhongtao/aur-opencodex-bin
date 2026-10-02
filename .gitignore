@@ -5,6 +5,8 @@ pkg/
 *.tar.zst
 *.log
 *.log.*
+__pycache__/
+*.pyc
 
 # Local editor and agent state
 .claude/
